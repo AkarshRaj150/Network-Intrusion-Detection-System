@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>NIDS // Console</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg: #0a0e0d;
+    --panel: #101614;
+    --line: #1e2a26;
+    --text: #c9d6d0;
+    --dim: #5c6d66;
+    --accent: #35d68f;
+    --accent-dim: #1c7350;
+    --warn: #e0a940;
+    --crit: #e0533f;
+    --mono: 'IBM Plex Mono', 'Courier New', monospace;
+  }
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
+
+  * { box-sizing: border-box; }
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  .scanlines{
+    position:fixed; inset:0; pointer-events:none; z-index:50;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,0.15) 0px, rgba(0,0,0,0.15) 1px, transparent 1px, transparent 3px);
+    opacity:.25;
+  }
+  header{
+    display:flex; align-items:baseline; justify-content:space-between;
+    padding:18px 24px; border-bottom:1px solid var(--line);
+  }
+  header h1{
+    margin:0; font-size:16px; letter-spacing:2px; font-weight:700;
+    color:var(--accent); text-transform:uppercase;
+  }
+  header h1 span{ color:var(--dim); font-weight:400; }
+  .status{
+    display:flex; align-items:center; gap:8px; color:var(--dim); font-size:11px;
+    letter-spacing:1px; text-transform:uppercase;
+  }
+  .dot{ width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px var(--accent); animation: pulse 1.6s infinite; }
+  @keyframes pulse{ 0%,100%{opacity:1} 50%{opacity:.35} }
+
+  .grid{
+    display:grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap:16px;
+    padding:20px 24px;
+  }
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-radius:3px;
+    padding:14px 16px;
+  }
+  .metric .label{ color:var(--dim); font-size:10px; letter-spacing:1.5px; text-transform:uppercase; }
+  .metric .value{ font-size:28px; font-weight:700; margin-top:6px; color:var(--text); }
+  .metric.tcp .value{ color:var(--accent); }
+  .metric.udp .value{ color:#4ea8de; }
+  .metric.icmp .value{ color:var(--warn); }
+
+  .main{ padding: 0 24px 24px; display:grid; grid-template-columns: 1.3fr 1fr; gap:16px; }
+  .panel-title{
+    font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:var(--dim);
+    margin-bottom:10px; display:flex; justify-content:space-between;
+  }
+  .panel-title .count{ color:var(--accent); }
+
+  table{ width:100%; border-collapse:collapse; }
+  th{
+    text-align:left; font-size:10px; letter-spacing:1px; text-transform:uppercase;
+    color:var(--dim); font-weight:600; padding:6px 8px; border-bottom:1px solid var(--line);
+  }
+  td{ padding:7px 8px; border-bottom:1px solid var(--line); font-size:12px; }
+  tr:hover td{ background:rgba(53,214,143,0.04); }
+  .sev-High{ color:var(--crit); font-weight:700; }
+  .sev-Medium{ color:var(--warn); font-weight:700; }
+  .sev-Low{ color:var(--accent); font-weight:700; }
+  .mono-dim{ color:var(--dim); }
+
+  .empty{ color:var(--dim); padding:20px 8px; text-align:center; font-size:12px; }
+
+  .talker-row{ display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--line); }
+  .talker-ip{ width:120px; flex-shrink:0; font-size:12px; }
+  .bar-track{ flex:1; height:6px; background:var(--line); border-radius:3px; overflow:hidden; }
+  .bar-fill{ height:100%; background:linear-gradient(90deg, var(--accent-dim), var(--accent)); }
+  .talker-count{ width:50px; text-align:right; color:var(--dim); font-size:11px; }
+
+  canvas{ max-height:220px; }
+
+  footer{ padding:10px 24px; color:var(--dim); font-size:10px; letter-spacing:1px; }
+</style>
+</head>
+<body>
+<div class="scanlines"></div>
+
+<header>
+  <h1>NIDS <span>// intrusion console</span></h1>
+  <div class="status"><span class="dot"></span> LIVE — polling every <span id="poll-rate">3</span>s</div>
+</header>
+
+<div class="grid">
+  <div class="card metric"><div class="label">Total Packets</div><div class="value" id="m-total">0</div></div>
+  <div class="card metric tcp"><div class="label">TCP</div><div class="value" id="m-tcp">0</div></div>
+  <div class="card metric udp"><div class="label">UDP</div><div class="value" id="m-udp">0</div></div>
+  <div class="card metric icmp"><div class="label">ICMP</div><div class="value" id="m-icmp">0</div></div>
+</div>
+
+<div class="main">
+  <div class="card">
+    <div class="panel-title"><span>Alert Log</span><span class="count" id="alert-count">0 events</span></div>
+    <table>
+      <thead>
+        <tr><th>Time</th><th>Type</th><th>Sev</th><th>Source</th><th>Destination</th><th>Detail</th></tr>
+      </thead>
+      <tbody id="alert-body"></tbody>
+    </table>
+    <div class="empty" id="alert-empty" style="display:none;">No alerts yet — traffic looks clean.</div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:16px;">
+      <div class="panel-title"><span>Alerts by Type</span></div>
+      <canvas id="chart-types"></canvas>
+    </div>
+    <div class="card">
+      <div class="panel-title"><span>Top Talkers (by packet count)</span></div>
+      <div id="talkers"></div>
+      <div class="empty" id="talkers-empty" style="display:none;">No traffic captured yet.</div>
+    </div>
+  </div>
+</div>
+
+<footer>NIDS // rule-based + statistical anomaly detection // logs/alerts.csv is the source of truth</footer>
+
+<script>
+const REFRESH_MS = {{ refresh_ms }};
+document.getElementById('poll-rate').textContent = (REFRESH_MS/1000).toFixed(0);
+
+let typeChart = null;
+
+function sevClass(sev){ return 'sev-' + (sev || 'Low'); }
+
+async function refreshAlerts(){
+  const res = await fetch('/api/alerts');
+  const alerts = await res.json();
+  const body = document.getElementById('alert-body');
+  const empty = document.getElementById('alert-empty');
+  document.getElementById('alert-count').textContent = alerts.length + ' events';
+
+  if (alerts.length === 0){
+    body.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  body.innerHTML = alerts.map(a => `
+    <tr>
+      <td class="mono-dim">${a.timestamp}</td>
+      <td>${a.attack_type}</td>
+      <td class="${sevClass(a.severity)}">${a.severity}</td>
+      <td>${a.src_ip}</td>
+      <td>${a.dst_ip}</td>
+      <td class="mono-dim">${a.detail}</td>
+    </tr>
+  `).join('');
+}
+
+async function refreshStats(){
+  const res = await fetch('/api/stats');
+  const stats = await res.json();
+
+  document.getElementById('m-total').textContent = stats.total_packets ?? 0;
+  document.getElementById('m-tcp').textContent = stats.tcp ?? 0;
+  document.getElementById('m-udp').textContent = stats.udp ?? 0;
+  document.getElementById('m-icmp').textContent = stats.icmp ?? 0;
+
+  // Alerts-by-type chart
+  const byType = stats.alerts_by_type || {};
+  const labels = Object.keys(byType);
+  const values = Object.values(byType);
+
+  if (!typeChart){
+    const ctx = document.getElementById('chart-types').getContext('2d');
+    typeChart = new Chart(ctx, {
+      type: 'bar',
+      data: { labels, datasets: [{ data: values, backgroundColor: '#35d68f' }] },
+      options: {
+        plugins: { legend: { display:false } },
+        scales: {
+          x: { ticks: { color:'#5c6d66', font:{family:'IBM Plex Mono', size:10} }, grid:{ color:'#1e2a26'} },
+          y: { ticks: { color:'#5c6d66', font:{family:'IBM Plex Mono', size:10} }, grid:{ color:'#1e2a26'}, beginAtZero:true }
+        }
+      }
+    });
+  } else {
+    typeChart.data.labels = labels;
+    typeChart.data.datasets[0].data = values;
+    typeChart.update();
+  }
+
+  // Top talkers
+  const talkers = stats.top_talkers || {};
+  const entries = Object.entries(talkers).sort((a,b) => b[1]-a[1]).slice(0,8);
+  const talkerDiv = document.getElementById('talkers');
+  const talkerEmpty = document.getElementById('talkers-empty');
+
+  if (entries.length === 0){
+    talkerDiv.innerHTML = '';
+    talkerEmpty.style.display = 'block';
+  } else {
+    talkerEmpty.style.display = 'none';
+    const max = Math.max(...entries.map(e => e[1]));
+    talkerDiv.innerHTML = entries.map(([ip,count]) => `
+      <div class="talker-row">
+        <div class="talker-ip">${ip}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${(count/max*100).toFixed(0)}%"></div></div>
+        <div class="talker-count">${count}</div>
+      </div>
+    `).join('');
+  }
+}
+
+function tick(){ refreshAlerts(); refreshStats(); }
+tick();
+setInterval(tick, REFRESH_MS);
+</script>
+</body>
+</html>
